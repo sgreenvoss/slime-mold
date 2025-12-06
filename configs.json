@@ -1,0 +1,43 @@
+{
+    "slime_configs": {
+        "red_slime": {
+            "move_dist": 1,
+            "sensor_dist": 9,
+            "rotation_angle": 45,
+            "sensor_rotation": 22.5,
+            "color": [ 1.0, 0.0, 0.0 ]
+        },
+        "blue_slime": {
+            "move_dist": 1,
+            "sensor_dist": 9,
+            "rotation_angle": 45,
+            "sensor_rotation": 45,
+            "color": [ 0.0, 0.0, 1.0 ]
+        }
+
+    },
+
+    "world_configs": {
+        "mostly_red": {
+            "slimes": 100000,
+            "slime_types": {
+                "red_slime": 0.8,
+                "blue_slime": 0.2
+            },
+            "width": 1000,
+            "height": 1000,
+            "active": 1
+        },
+        "mostly_blue": {
+            "slimes": 100000,
+            "slime_types": {
+                "red_slime": 0.3,
+                "blue_slime": 0.7
+            },
+            "width": 1000,
+            "height": 1000,
+            "active": 1
+        }
+    }
+
+}

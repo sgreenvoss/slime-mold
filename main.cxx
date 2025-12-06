@@ -2,12 +2,6 @@
 #define _CRT_SECURE_NO_WARNINGS
 #define GLM_ENABLE_EXPERIMENTAL
 
-
-const unsigned int REF_PER_FRAME = 1000;
-const int SLIME_COUNT = 20000;
-int WIDTH = 800;
-int HEIGHT = 800;
-
 #include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,17 +12,26 @@ int HEIGHT = 800;
 #include <algorithm>
 #include <chrono>
 #include <thread>
+#include <omp.h>
 
+#include <fstream>
+#include "json.hpp"
+
+using json = nlohmann::json;
 using namespace std;
 
 #include <GL/glew.h>    // include GLEW and new version of GL on Windows
 #include <GLFW/glfw3.h> // GLFW helper library
 #include <glm/vec3.hpp>   // glm::vec3
+#include <glm/vec2.hpp>
 //#include <glm/vec4.hpp>   // glm::vec4
 //#include <glm/mat4x4.hpp> // glm::mat4
 //#include <glm/gtx/string_cast.hpp>
 //#include <glm/gtc/type_ptr.hpp>
 //#include <glm/gtc/matrix_transform.hpp>  // glm::translate, glm::rotate, glm::scale
+
+const unsigned int REF_PER_FRAME = 1000;
+string world_type = "mostly_blue";
 
 class SlimeManager;
 
@@ -39,19 +42,16 @@ constexpr const T& my_clamp(const T& val, const T& low, const T& high) {
 }
 
 class coord {
-public: 
-    float x; 
+public:
+    float x;
     float y;
     int cx, cy;
 
-    coord(float tx, float ty) {
-        x = tx; y = ty;
-        setCoord();
-    }
-    ///// BAD TODO FIX FIX FIX
-    void setCoord() {
-        cx = my_clamp((int)floor(x), 0, WIDTH - 1);
-        cy = my_clamp((int)floor(y), 0, HEIGHT - 1);
+    coord(float tx, float ty, int width, int height)
+        : x(tx), y(ty)
+    {
+        cx = my_clamp((int)floor(x), 0, width - 1);
+        cy = my_clamp((int)floor(y), 0, height - 1);
     }
 };
 
@@ -72,16 +72,18 @@ public:
     float x, y; // screen space!
     float mx, my; // world(ish) space!
     float dir; 
-    float speed;
+    //float speed;
     uniform_int_distribution<> r_int;
     uniform_int_distribution<> r_neg;
     mt19937 gen;
+    glm::vec3 color;
 
     float type; // this is float because im using the z coord - doesn't need to be
 
     int moveDist;
     int sensDist;
     float sensAngle;
+    float rotAngle;
 
     Particle() : gen(random_device{}()),
                  r_int(1, 10),
@@ -93,18 +95,19 @@ public:
         moveDist = (t ? 1 : 2);
         sensDist = (t ? 9 : 3);
         sensAngle = (t ? 44 : 22.5)  * (3.141593/180);
-        speed = (t ? 2.0 : 1.0);
+        //speed = (t ? 2.0 : 1.0);
     }
 
-    Particle(int part_type, int _moveDist, int _sensDist, int _sensAngle, int _speed) : gen(random_device{}()),
+    Particle(int _moveDist, int _sensDist, float _sensAngle, float _rotAngle, glm::vec3 _color) : gen(random_device{}()),
         r_int(1, 10),
         r_neg(-1, 2)
     {
-        type = (float)part_type;
         moveDist = _moveDist;
         sensDist = _sensDist;
         sensAngle = _sensAngle * (3.141593 / 180);
-        speed = _speed;
+        rotAngle = _rotAngle * (3.141593 / 180);
+        //speed = _speed;
+        color = _color;
     }
 
     void turn(float u, float r, float l) {
@@ -130,41 +133,61 @@ public:
     int width, height;
     vector<Particle> slimes;
     GLuint vao;
-    GLuint vbo;
+    GLuint v_vbo;
+    GLuint c_vbo;
     uniform_real_distribution<> distrib;
     uniform_real_distribution<> angleDist;
     uniform_int_distribution<> type_gen;
     mt19937 gen;
 
-    SlimeManager(int w, int h, int s_count) :
-        slimeCount(s_count),
-        width(w),
-        height(h),
+    SlimeManager(json &config, string current_world) :
+        slimeCount(config["world_configs"][current_world]["slimes"]),
+        width(config["world_configs"][current_world]["width"]),
+        height(config["world_configs"][current_world]["height"]),
         gen(random_device{}()),
         distrib(-1.0, 1.0),
         type_gen(-1.0, 2.0),
         angleDist(0.0, 2.0 * 3.141593)
     {
-        for (int i = 0; i < slimeCount; i++) {
-            int type = type_gen(gen);
-            if (type < 0) {
-                slimes.emplace_back(type, 1, 9, 44, 2.0);
+        json world = config.at("world_configs").at(current_world);
+
+        int slimed = 0;
+        for (auto& kvp : world.at("slime_types").items()) {
+            float slime_ratio = kvp.value();
+
+            int s_count = (int)(slime_ratio * (float)slimeCount);
+            json slime_conf = config.at("slime_configs").at(kvp.key());
+
+            float r = slime_conf.at("color")[0];
+            float g = slime_conf.at("color")[1];
+            float b = slime_conf.at("color")[2];
+
+            glm::vec3 col = glm::vec3(r,g,b);
+
+            int start = slimed;
+            int end = start + s_count;
+            for (int i = start; i < end; i++) {
+                slimes.emplace_back(slime_conf["move_dist"],
+                    slime_conf["sensor_dist"],
+                    slime_conf["sensor_rotation"],
+                    slime_conf["rotation_angle"],
+                    col);
+
+                float randx = distrib(gen);
+                float randy = distrib(gen);
+                slimes[i].x = randx;
+                slimes[i].mx = scrToWorld(randx, width);
+                slimes[i].y = randy;
+                slimes[i].my = scrToWorld(randy, height);
+                slimes[i].dir = angleDist(gen);
+                slimed++;
             }
-            else if (type == 0.0) {
-                slimes.emplace_back(type, 2, 3, 22.5, 1.0);
-            }
-            else {
-                slimes.emplace_back(type, 3, 7, 15.5, 2.0);
-            }
-            float randx = distrib(gen);
-            float randy = distrib(gen);
-            slimes[i].x = randx;
-            slimes[i].mx = scrToWorld(randx, width);
-            slimes[i].y = randy;
-            slimes[i].my = scrToWorld(randy, height);
-            slimes[i].dir = angleDist(gen);
         }
         cout << "slimes initialized." << endl;
+    }
+
+    SlimeManager() {
+
     }
 
     void assign_angle(int i) {
@@ -174,23 +197,57 @@ public:
 
 
     void slimesToGPU() {
-        int numind = slimeCount * 3;
+        int numind = slimeCount * 2;
+        int numCol = slimeCount * 3;
+
         std::vector<GLfloat> vertices(numind);
+        std::vector<GLfloat> color(numCol);
+
         for (int i = 0; i < slimeCount; i++) {
-            vertices[i * 3] = slimes[i].x;
-            vertices[i * 3 + 1] = slimes[i].y;
-            vertices[i * 3 + 2] = slimes[i].type; // this is actually the z but im not using the z
+            vertices[i * 2] = slimes[i].x;
+            vertices[i * 2 + 1] = slimes[i].y;
+            color[i * 3] = slimes[i].color.x;
+            color[i * 3 + 1] = slimes[i].color.y;
+            color[i * 3 + 2] = slimes[i].color.z;
+           // vertices[i * 3 + 2] = slimes[i].type; // this is actually the z but im not using the z
         }
+
+        // --- VAO ---
         glGenVertexArrays(1, &vao);
         glBindVertexArray(vao);
-        glGenBuffers(1, &vbo);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
 
-        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(GLfloat), vertices.data(), GL_DYNAMIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        // --- Position VBO ---
+        glGenBuffers(1, &v_vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, v_vbo);
+        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float),
+            vertices.data(), GL_DYNAMIC_DRAW);
+
+        // Bind VBO to binding index 0
+        glBindVertexBuffer(0, v_vbo, 0, 2 * sizeof(float));
+
+        // Attribute 0 describes positions
+        glVertexAttribFormat(0, 2, GL_FLOAT, GL_FALSE, 0);
+        glVertexAttribBinding(0, 0);
         glEnableVertexAttribArray(0);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+        // --- Color VBO ---
+        glGenBuffers(1, &c_vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, c_vbo);
+        glBufferData(GL_ARRAY_BUFFER, color.size() * sizeof(float),
+            color.data(), GL_DYNAMIC_DRAW);
+
+        // Bind color VBO to binding index 1
+        glBindVertexBuffer(1, c_vbo, 0, 3 * sizeof(float));
+
+        // Attribute 1 describes colors
+        glVertexAttribFormat(1, 3, GL_FLOAT, GL_FALSE, 0);
+        glVertexAttribBinding(1, 1);
+        glEnableVertexAttribArray(1);
+
+        // Cleanup
         glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
     }
 
 
@@ -204,11 +261,28 @@ public:
     SlimeManager sm;
     vector<vector<int>> data;
     vector<vector<float>> trails;
+    json world_config;
+    string current_world;
 
-    World(const int w, const int h) : data(w, vector<int>(h, 0)), 
-                                      trails(w, vector<float>(h, 0)), 
-                                      sm(w, h, SLIME_COUNT) {
+    World(const int w, const int h, SlimeManager &s) : data(w, vector<int>(h, 0)), 
+                                                       trails(w, vector<float>(h, 0)),
+                                                       sm(s){
         width = w; height = h;
+
+        sm.slimesToGPU();
+    }
+
+    World(json conf, string world_name) : data(conf["width"], vector<int>(conf["height"], 0)),
+                                          trails(conf["width"], vector<float>(conf["height"], 0)) {
+        width = conf["width"]; height = conf["height"];
+        world_config = conf;
+        current_world = world_name;
+       // cout << "running here" << endl;
+
+    }
+
+    void AddSlimeManager(json config) {
+        sm = SlimeManager(config, current_world);
         sm.slimesToGPU();
     }
 
@@ -239,18 +313,23 @@ public:
             // start by sensing
             // look at first sens
             
-            coord up = { slime.mx + cos(slime.dir) * slime.sensDist, 
-                         slime.my + sin(slime.dir) * slime.sensDist };
+            coord up(slime.mx + cos(slime.dir) * slime.sensDist,
+                     slime.my + sin(slime.dir) * slime.sensDist,
+                     width, height);
+
             float up_trail = trails[up.cx][up.cy];
 
             // calculate right hand sens
-            coord right = { slime.mx + cos(slime.dir + slime.sensAngle) * slime.sensDist, 
-                            slime.my + sin(slime.dir + slime.sensAngle) * slime.sensDist };
+            coord right(slime.mx + cos(slime.dir + slime.sensAngle) * slime.sensDist,
+                        slime.my + sin(slime.dir + slime.sensAngle) * slime.sensDist,
+                        width, height);
+
             float right_trail = trails[right.cx][right.cy];
 
             // calculate left hand sens
-            coord left = { slime.mx + cos(slime.dir - slime.sensAngle) * slime.sensDist, 
-                           slime.my + sin(slime.dir - slime.sensAngle) * slime.sensDist };
+            coord left(slime.mx + cos(slime.dir - slime.sensAngle) * slime.sensDist,
+                          slime.my + sin(slime.dir - slime.sensAngle) * slime.sensDist,
+                          width, height);
             float left_trail = trails[left.cx][left.cy];
 
             slime.turn(up_trail, right_trail, left_trail);
@@ -264,8 +343,8 @@ public:
 
             float dirx = cos(slime.dir);
             float diry = sin(slime.dir);
-            float newPosx = slime.mx + (dirx * slime.speed);
-            float newPosy = slime.my + (diry * slime.speed);
+            float newPosx = slime.mx + (dirx * slime.moveDist);
+            float newPosy = slime.my + (diry * slime.moveDist);
 
             if (newPosx < 0 || newPosx >= width) {
                 newPosx = max((float)0.0, min(newPosx, (float)width - 1));
@@ -284,7 +363,6 @@ public:
             int cx = my_clamp((int)slime.mx, 0, width - 1);
             int cy = my_clamp((int)slime.my, 0, height - 1);
             trails[cx][cy] += 1.0;
-           // trails[(int)newPosx][(int)newPosy] = 1;
         }
 
         // sensory stage
@@ -292,15 +370,17 @@ public:
             for (int y = 0; y < height; y++)
                 trails[x][y] *= 0.95f;
 
-        glBindBuffer(GL_ARRAY_BUFFER, sm.vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, sm.v_vbo);
 
-        int numind = sm.slimeCount * 3;
+        // stores pos of each slime
+        int numind = sm.slimeCount * 2;
         std::vector<GLfloat> vertices(numind);
+
         for (int i = 0; i < sm.slimeCount; i++) {
-            vertices[i * 3] = sm.slimes[i].x;
-            vertices[i * 3 + 1] = sm.slimes[i].y;
-            vertices[i * 3 + 2] = sm.slimes[i].type;
+            vertices[i * 2] = sm.slimes[i].x;
+            vertices[i * 2 + 1] = sm.slimes[i].y;
         }
+
         glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
         //this_thread::sleep_for(chrono::milliseconds(5));
     }
@@ -324,7 +404,6 @@ class RenderManager
 {
 public:
                  RenderManager();
-   void          SetView(glm::vec3 &c, glm::vec3 &, glm::vec3 &);
    void          SetColor(double r, double g, double b);
    void          SetColor(std::vector<double>&);
    //void          Render(ShapeType, glm::mat4 model);
@@ -333,14 +412,14 @@ public:
 
   private:
    glm::vec3 color;
-   GLuint sphereVAO;
-   GLuint sphereNumPrimitives;
-   GLuint cylinderVAO;
-   GLuint cylinderNumPrimitives;
-   GLuint mvploc;
-   GLuint colorloc;
-   GLuint camloc;
-   GLuint ldirloc;
+   //GLuint sphereVAO;
+   //GLuint sphereNumPrimitives;
+   //GLuint cylinderVAO;
+   //GLuint cylinderNumPrimitives;
+   //GLuint mvploc;
+   //GLuint colorloc;
+   //GLuint camloc;
+   //GLuint ldirloc;
    /*glm::mat4 projection;
    glm::mat4 view;*/
    GLuint shaderProgram;
@@ -415,36 +494,43 @@ void RenderManager::SetColor(std::vector<double>& cols)
     color[2] = cols[2];
 }
 
-void SetUpVBOs(std::vector<float> &coords, std::vector<float> &normals,
-               GLuint &points_vbo, GLuint &normals_vbo, GLuint &index_vbo)
-{
-  int numIndices = coords.size()/3;
-  std::vector<GLuint> indices(numIndices);
-  for(int i = 0; i < numIndices; i++)
-    indices[i] = i;
+//void SetUpVBOs(std::vector<float> &coords, std::vector<float> &colors,
+//               GLuint &points_vbo, GLuint &colors_vbo, GLuint &index_vbo)
+//{
+//  int numIndices = coords.size()/3;
+//  std::vector<GLuint> indices(numIndices);
+//  for(int i = 0; i < numIndices; i++)
+//    indices[i] = i;
+//
+//  points_vbo = 0;
+//  glGenBuffers(1, &points_vbo);
+//  glBindBuffer(GL_ARRAY_BUFFER, points_vbo);
+//  glBufferData(GL_ARRAY_BUFFER, coords.size() * sizeof(float), coords.data(), GL_STATIC_DRAW);
+//
+//  colors_vbo = 0;
+//  glGenBuffers(1, &colors_vbo);
+//  glBindBuffer(GL_ARRAY_BUFFER, colors_vbo);
+//  glBufferData(GL_ARRAY_BUFFER, colors.size() * sizeof(float), colors.data(), GL_STATIC_DRAW);
+//
+//  index_vbo = 0;    // Index buffer object
+//  glGenBuffers(1, &index_vbo);
+//  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_vbo);
+//  glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(GLuint), indices.data(), GL_STATIC_DRAW);
+//}
 
-  points_vbo = 0;
-  glGenBuffers(1, &points_vbo);
-  glBindBuffer(GL_ARRAY_BUFFER, points_vbo);
-  glBufferData(GL_ARRAY_BUFFER, coords.size() * sizeof(float), coords.data(), GL_STATIC_DRAW);
 
-  normals_vbo = 0;
-  glGenBuffers(1, &normals_vbo);
-  glBindBuffer(GL_ARRAY_BUFFER, normals_vbo);
-  glBufferData(GL_ARRAY_BUFFER, normals.size() * sizeof(float), normals.data(), GL_STATIC_DRAW);
-
-  index_vbo = 0;    // Index buffer object
-  glGenBuffers(1, &index_vbo);
-  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_vbo);
-  glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(GLuint), indices.data(), GL_STATIC_DRAW);
+World SetUpWorld(json config) {
+    json world_configuration = config["world_configs"][world_type];
+    return World(world_configuration, world_type);
 }
 
-
-//
-// PART3: main function
-//
 int main() 
 {
+    std::ifstream f("configs.json");
+    json config = json::parse(f);
+
+    World w = SetUpWorld(config);
+
     if (!glfwInit()) {
         fprintf(stderr, "ERROR: could not start GLFW3\n");
         exit(EXIT_FAILURE);
@@ -455,8 +541,7 @@ int main()
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "sliiime", NULL, NULL);
-
+    GLFWwindow* window = glfwCreateWindow(w.width, w.height, "sliiime", NULL, NULL);
     if (!window) {
         fprintf(stderr, "ERROR: could not open window with GLFW3\n");
         glfwTerminate();
@@ -467,35 +552,32 @@ int main()
     glewExperimental = GL_TRUE;
     glewInit();
 
+    w.AddSlimeManager(config);
     RenderManager rm = RenderManager();
 
-    //SlimeManager sm = SlimeManager(WIDTH, HEIGHT, 5000);
-   // sm.slimesToGPU();
-    World w = World(WIDTH, HEIGHT);
-    //glViewport(0, 0, WIDTH, HEIGHT);
 
-  while (!glfwWindowShouldClose(window)) 
-  {
-    // wipe the drawing surface clear
-    /*  cout << "slowdown" << endl;
-      this_thread::sleep_for(chrono::milliseconds(500));*/
-    glClearColor(0, 0, 0, 1.0);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    while (!glfwWindowShouldClose(window)) 
+    {
+        // wipe the drawing surface clear
+        /*  cout << "slowdown" << endl;
+            this_thread::sleep_for(chrono::milliseconds(500));*/
+        glClearColor(0, 0, 0, 1.0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    glBindVertexArray(w.sm.vao);
+        glBindVertexArray(w.sm.vao);
 
-    w.serial_tick();
-    glDrawArrays(GL_POINTS, 0, w.sm.slimeCount);
+        w.serial_tick();
+        glDrawArrays(GL_POINTS, 0, w.sm.slimeCount);
 
-    // update other events like input handling
-    glfwPollEvents();
-    // put the stuff we've been drawing onto the display
-    glfwSwapBuffers(window);
-  }
+        // update other events like input handling
+        glfwPollEvents();
+        // put the stuff we've been drawing onto the display
+        glfwSwapBuffers(window);
+    }
 
-  // close GL context and any other GLFW resources
-  glfwTerminate();
-  return 0;
+    // close GL context and any other GLFW resources
+    glfwTerminate();
+    return 0;
 }
 
 
@@ -503,12 +585,13 @@ const char* GetVertexShader() {
     static char vertShader[4096];
     strcpy(vertShader,
         "#version 400\n"
-        "layout (location = 0) in vec3 pos;\n"
-        "out float s_type;\n"
+        "layout (location = 0) in vec2 pos;\n"
+        "layout (location = 1) in vec3 color;\n"
+        "out vec3 f_color;\n"
         "void main()\n"
         "{\n"
         "   gl_Position = vec4(pos.x, pos.y, 0.0, 1.0);\n"
-        "   s_type = pos.z;\n"
+        "   f_color = color;\n"
         "}\n"
     );
     return vertShader;
@@ -519,16 +602,10 @@ const char *GetFragmentShader()
    static char fragmentShader[4096];
    strcpy(fragmentShader, 
            "#version 400\n"
-           "in float s_type;\n"
+           "in vec3 f_color;\n"
            "out vec4 frag_color;\n"
            "void main() {\n"
-           "    if (s_type > 0) {\n"
-           "        frag_color = vec4(1.0, 0, 0, 1.0);\n"
-           "     } else if (s_type == 0.0) {"
-           "        frag_color = vec4(1.0, 0.0, 1.0, 1.0);\n"
-           "    } else {\n" 
-           "        frag_color = vec4(0, 1.0, 0, 1.0);\n"
-           "    }\n"
+           "    frag_color = vec4(f_color.x, f_color.y, f_color.z, 1.0);\n"
            "}\n"
          );
    return fragmentShader;
