@@ -24,14 +24,14 @@ using namespace std;
 #include <GLFW/glfw3.h> // GLFW helper library
 #include <glm/vec3.hpp>   // glm::vec3
 #include <glm/vec2.hpp>
-//#include <glm/vec4.hpp>   // glm::vec4
-//#include <glm/mat4x4.hpp> // glm::mat4
-//#include <glm/gtx/string_cast.hpp>
-//#include <glm/gtc/type_ptr.hpp>
-//#include <glm/gtc/matrix_transform.hpp>  // glm::translate, glm::rotate, glm::scale
+
 
 const unsigned int REF_PER_FRAME = 1000;
-string world_type = "mostly_blue";
+const string world_type = "ventricles";
+void framebuffer_size_callback(GLFWwindow* window, int width, int height);
+void processInput(GLFWwindow* window);
+
+// green_city was 60000
 
 class SlimeManager;
 
@@ -72,57 +72,66 @@ public:
     float x, y; // screen space!
     float mx, my; // world(ish) space!
     float dir; 
-    //float speed;
     uniform_int_distribution<> r_int;
-    uniform_int_distribution<> r_neg;
+    uniform_real_distribution<> r_neg;
     mt19937 gen;
     glm::vec3 color;
 
-    float type; // this is float because im using the z coord - doesn't need to be
-
     int moveDist;
     int sensDist;
+    int pref;
     float sensAngle;
     float rotAngle;
+    float track;
 
-    Particle() : gen(random_device{}()),
-                 r_int(1, 10),
-                 r_neg(-1,2)
-    {
-        type = (float) r_neg(gen);
-        // cout << type << endl;
-        int t = (int)type;
-        moveDist = (t ? 1 : 2);
-        sensDist = (t ? 9 : 3);
-        sensAngle = (t ? 44 : 22.5)  * (3.141593/180);
-        //speed = (t ? 2.0 : 1.0);
-    }
-
-    Particle(int _moveDist, int _sensDist, float _sensAngle, float _rotAngle, glm::vec3 _color) : gen(random_device{}()),
+    Particle(int _moveDist, int _sensDist, float _sensAngle, float _rotAngle, glm::vec3 _color, int _pref) : gen(random_device{}()),
         r_int(1, 10),
-        r_neg(-1, 2)
+        r_neg(-1, 1)
     {
         moveDist = _moveDist;
         sensDist = _sensDist;
         sensAngle = _sensAngle * (3.141593 / 180);
         rotAngle = _rotAngle * (3.141593 / 180);
-        //speed = _speed;
         color = _color;
+        pref = _pref;
+        track = _pref * 5;
     }
 
     void turn(float u, float r, float l) {
-        if (u > r and u > l) return; // no change
+        // prob a cleverer way to do this but i am time limited.
+        dir += r_neg(gen) * 0.05f;
+        switch (pref) {
+            case 1:
+                if (u > r and u > l) return; // no change
 
-        if (r == l) {
-            // turn randomly (based on coin flip
-            if (r_int(gen) % 2 == 0)
-                dir += sensAngle;  // turn right (?)
-            else dir -= sensAngle; // turn left(?)
+                if (r == l) {
+                    // turn randomly (based on coin flip
+                    if (r_int(gen) % 2 == 0)
+                        dir += sensAngle;  // turn right (?)
+                    else dir -= sensAngle; // turn left(?)
+                }
+                else if (l > r) {
+                    dir -= sensAngle; // left
+                }
+                else dir += sensAngle; // right
+                break;
+            case -1:
+                if (u < r and u < l) return; // no change
+
+                if (r == l) {
+                    // turn randomly (based on coin flip
+                    if (r_int(gen) % 2 == 0)
+                        dir += sensAngle;  // turn right (?)
+                    else dir -= sensAngle; // turn left(?)
+                }
+                else if (l < r) {
+                    dir -= sensAngle; // left
+                }
+                else dir += sensAngle; // right
+                break;
+            default:
+                break;
         }
-        else if (l > r) {
-            dir -= sensAngle; // left
-        }
-        else dir += sensAngle; // right
     }
 };
 
@@ -135,10 +144,15 @@ public:
     GLuint vao;
     GLuint v_vbo;
     GLuint c_vbo;
+    GLuint p_vbo;
     uniform_real_distribution<> distrib;
     uniform_real_distribution<> angleDist;
     uniform_int_distribution<> type_gen;
     mt19937 gen;
+    vector<vector<int>> data;
+    vector<vector<int>> data_past;
+    vector<vector<float>> trails;
+   
 
     SlimeManager(json &config, string current_world) :
         slimeCount(config["world_configs"][current_world]["slimes"]),
@@ -147,10 +161,13 @@ public:
         gen(random_device{}()),
         distrib(-1.0, 1.0),
         type_gen(-1.0, 2.0),
-        angleDist(0.0, 2.0 * 3.141593)
+        angleDist(0.0, 2.0 * 3.141593),
+        data(config["world_configs"][current_world]["width"], vector<int>(config["world_configs"][current_world]["height"], 0)),
+        trails(config["world_configs"][current_world]["width"], vector<float>(config["world_configs"][current_world]["height"], 0)),
+        data_past(config["world_configs"][current_world]["width"], vector<int>(config["world_configs"][current_world]["height"], 0))
     {
         json world = config.at("world_configs").at(current_world);
-
+       
         int slimed = 0;
         for (auto& kvp : world.at("slime_types").items()) {
             float slime_ratio = kvp.value();
@@ -171,7 +188,8 @@ public:
                     slime_conf["sensor_dist"],
                     slime_conf["sensor_rotation"],
                     slime_conf["rotation_angle"],
-                    col);
+                    col,
+                    slime_conf["pref"]);
 
                 float randx = distrib(gen);
                 float randy = distrib(gen);
@@ -190,11 +208,29 @@ public:
 
     }
 
-    void assign_angle(int i) {
-        slimes[i].dir = angleDist(gen);
-        //cout << " in here: " << slimes[i].dir << endl;
+
+    float scrToWorldx(float x) {
+        float slope = (float)(width - 1) / 2.;
+        return slope * (x + 1);
     }
 
+    float scrToWorldy(float y) {
+        float slope = (float)(height - 1) / 2.;
+        return slope * (y + 1);
+    }
+
+    float worldToScrx(int x) {
+        float slope = 2. / (float)(width - 1);
+        return (slope * x) - 1;
+    }
+    float worldToScry(int y) {
+        float slope = 2. / (float)(height - 1);
+        return (slope * y) - 1;
+    }
+
+    void assign_angle(int i) {
+        slimes[i].dir = angleDist(gen);
+    }
 
     void slimesToGPU() {
         int numind = slimeCount * 2;
@@ -202,6 +238,7 @@ public:
 
         std::vector<GLfloat> vertices(numind);
         std::vector<GLfloat> color(numCol);
+        std::vector<GLfloat> pixels(width * height);
 
         for (int i = 0; i < slimeCount; i++) {
             vertices[i * 2] = slimes[i].x;
@@ -209,8 +246,8 @@ public:
             color[i * 3] = slimes[i].color.x;
             color[i * 3 + 1] = slimes[i].color.y;
             color[i * 3 + 2] = slimes[i].color.z;
-           // vertices[i * 3 + 2] = slimes[i].type; // this is actually the z but im not using the z
         }
+
 
         // --- VAO ---
         glGenVertexArrays(1, &vao);
@@ -238,7 +275,6 @@ public:
 
         // Bind color VBO to binding index 1
         glBindVertexBuffer(1, c_vbo, 0, 3 * sizeof(float));
-
         // Attribute 1 describes colors
         glVertexAttribFormat(1, 3, GL_FLOAT, GL_FALSE, 0);
         glVertexAttribBinding(1, 1);
@@ -250,96 +286,35 @@ public:
 
     }
 
-
-};
-
-
-class World {
-public:
-    int width, height;
-    float dwidth, dheight;
-    SlimeManager sm;
-    vector<vector<int>> data;
-    vector<vector<float>> trails;
-    json world_config;
-    string current_world;
-
-    World(const int w, const int h, SlimeManager &s) : data(w, vector<int>(h, 0)), 
-                                                       trails(w, vector<float>(h, 0)),
-                                                       sm(s){
-        width = w; height = h;
-
-        sm.slimesToGPU();
-    }
-
-    World(json conf, string world_name) : data(conf["width"], vector<int>(conf["height"], 0)),
-                                          trails(conf["width"], vector<float>(conf["height"], 0)) {
-        width = conf["width"]; height = conf["height"];
-        world_config = conf;
-        current_world = world_name;
-       // cout << "running here" << endl;
-
-    }
-
-    void AddSlimeManager(json config) {
-        sm = SlimeManager(config, current_world);
-        sm.slimesToGPU();
-    }
-
-    float scrToWorldx(float x) {
-        float slope = (float)(width-1) / 2.;
-        return slope * (x + 1);
-    }
-
-    float scrToWorldy(float y) {
-        float slope = (float)(height-1) / 2.;
-        return slope * (y + 1);
-    }
-
-    float worldToScrx(int x) {
-        float slope = 2. / (float)(width-1);
-        return (slope * x) - 1;
-    }
-    float worldToScry(int y) {
-        float slope = 2. / (float)(height-1);
-        return (slope * y) - 1;
-    }
-
-    void serial_tick() {    
+    void serial_tick() {
 
         // motor stage
-        for (int i = 0; i < sm.slimeCount; i++) {
-            Particle& slime = sm.slimes[i];
-            // start by sensing
-            // look at first sens
-            
+        for (int i = 0; i < width; i++)
+            memset(data[i].data(), 0, height * sizeof(int));
+
+        for (int i = 0; i < slimeCount; i++) {
+            Particle& slime = slimes[i];
+
             coord up(slime.mx + cos(slime.dir) * slime.sensDist,
-                     slime.my + sin(slime.dir) * slime.sensDist,
-                     width, height);
+                slime.my + sin(slime.dir) * slime.sensDist,
+                width, height);
 
             float up_trail = trails[up.cx][up.cy];
 
             // calculate right hand sens
             coord right(slime.mx + cos(slime.dir + slime.sensAngle) * slime.sensDist,
-                        slime.my + sin(slime.dir + slime.sensAngle) * slime.sensDist,
-                        width, height);
+                slime.my + sin(slime.dir + slime.sensAngle) * slime.sensDist,
+                width, height);
 
             float right_trail = trails[right.cx][right.cy];
 
             // calculate left hand sens
             coord left(slime.mx + cos(slime.dir - slime.sensAngle) * slime.sensDist,
-                          slime.my + sin(slime.dir - slime.sensAngle) * slime.sensDist,
-                          width, height);
+                slime.my + sin(slime.dir - slime.sensAngle) * slime.sensDist,
+                width, height);
             float left_trail = trails[left.cx][left.cy];
 
             slime.turn(up_trail, right_trail, left_trail);
-
-           /* cout << "======" << endl;
-            cout << "my dir is " << slime.dir << endl;
-            cout << slime.mx << " " << slime.my << endl;
-            cout << "want to sense " << up.x << " " << up.y << endl;
-            cout << "want to sense " << right.x << " " << right.y << endl;
-            cout << "want to sense " << left.x << " " << left.y << endl;*/
 
             float dirx = cos(slime.dir);
             float diry = sin(slime.dir);
@@ -348,42 +323,107 @@ public:
 
             if (newPosx < 0 || newPosx >= width) {
                 newPosx = max((float)0.0, min(newPosx, (float)width - 1));
-                //slime.dir += 3.14 * rand();
-                sm.assign_angle(i);
+                assign_angle(i);
             } if (newPosy < 0 || newPosy >= height) {
                 newPosy = max((float)0., min(newPosy, (float)height - 1));
-                sm.assign_angle(i);
+                assign_angle(i);
             }
+            int cx = my_clamp((int)newPosx, 0, width - 1);
+            int cy = my_clamp((int)newPosy, 0, height - 1);
 
-            slime.mx = newPosx;
-            slime.x = worldToScrx(newPosx);
-            slime.my = newPosy;
-            slime.y = worldToScry(newPosy);
+            if (data_past[cx][cy] == 0) {
+                // update world coords
+                slime.mx = newPosx;
+                slime.my = newPosy;
 
-            int cx = my_clamp((int)slime.mx, 0, width - 1);
-            int cy = my_clamp((int)slime.my, 0, height - 1);
-            trails[cx][cy] += 1.0;
+                // convert to clip-space for rendering
+                slime.x = worldToScrx(newPosx);
+                slime.y = worldToScry(newPosy);
+
+                // deposit trail and mark occupancy
+                trails[cx][cy] += slime.track;
+                data[cx][cy] = 1;
+            }
         }
 
         // sensory stage
+        #pragma omp parallel for
         for (int x = 0; x < width; x++)
             for (int y = 0; y < height; y++)
-                trails[x][y] *= 0.95f;
+                trails[x][y] *= 0.8f;
 
-        glBindBuffer(GL_ARRAY_BUFFER, sm.v_vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, v_vbo);
 
         // stores pos of each slime
-        int numind = sm.slimeCount * 2;
+        int numind = slimeCount * 2;
         std::vector<GLfloat> vertices(numind);
 
-        for (int i = 0; i < sm.slimeCount; i++) {
-            vertices[i * 2] = sm.slimes[i].x;
-            vertices[i * 2 + 1] = sm.slimes[i].y;
+        #pragma omp parallel for
+        for (int i = 0; i < slimeCount; i++) {
+            vertices[i * 2] = slimes[i].x;
+            vertices[i * 2 + 1] = slimes[i].y;
         }
 
         glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
+        data.swap(data_past);
         //this_thread::sleep_for(chrono::milliseconds(5));
     }
+
+    void Diffuse() {
+       float* tempData = new float[width * height];
+       float** temp = new float* [height];
+
+       for (int y = 0; y < height; y++)
+           temp[y] = tempData + y * width;
+
+       for (int x = 1; x < width - 1; x++) {
+           for (int y = 1; y < height - 1; y++) {
+               temp[x][y] = (trails[x - 1][y] + trails[x][y] + trails[x + 1][y]) / 3.f;
+           }
+       }
+       for (int x = 1; x < width - 1; x++) {
+           for (int y = 1; y < height - 1; y++) {
+               trails[x][y] = (temp[x][y - 1] + temp[x][y] + temp[x][y + 1]) / 3.f;
+          }
+       }
+
+       delete[] temp;     
+       delete[] tempData;
+   }
+
+};
+
+
+class World {
+public:
+    int width, height;
+    vector<SlimeManager> sm;
+    json world_config;
+
+
+    World(json conf) {
+        world_config = conf;
+        width = conf["worlds"][world_type]["width"];
+        height = conf["worlds"][world_type]["height"];
+       // cout << "running here" << endl;
+
+    }
+
+    void AddSlimeManagerN(json config) {
+        cout << config["worlds"][world_type]["active_worlds"] << endl;
+        for (string world_name : config["worlds"][world_type]["active_worlds"]) {
+            sm.push_back(SlimeManager(config, world_name));
+            sm.back().slimesToGPU();
+        }
+    }
+
+    void tick_all() {
+        for (auto& s : sm) {
+            s.serial_tick();
+        }
+    }
+
+
 };
 
 class RenderManager;
@@ -406,22 +446,11 @@ public:
                  RenderManager();
    void          SetColor(double r, double g, double b);
    void          SetColor(std::vector<double>&);
-   //void          Render(ShapeType, glm::mat4 model);
    GLFWwindow   *GetWindow() { return window; };
 
 
   private:
    glm::vec3 color;
-   //GLuint sphereVAO;
-   //GLuint sphereNumPrimitives;
-   //GLuint cylinderVAO;
-   //GLuint cylinderNumPrimitives;
-   //GLuint mvploc;
-   //GLuint colorloc;
-   //GLuint camloc;
-   //GLuint ldirloc;
-   /*glm::mat4 projection;
-   glm::mat4 view;*/
    GLuint shaderProgram;
    GLFWwindow *window;
 
@@ -494,42 +523,14 @@ void RenderManager::SetColor(std::vector<double>& cols)
     color[2] = cols[2];
 }
 
-//void SetUpVBOs(std::vector<float> &coords, std::vector<float> &colors,
-//               GLuint &points_vbo, GLuint &colors_vbo, GLuint &index_vbo)
-//{
-//  int numIndices = coords.size()/3;
-//  std::vector<GLuint> indices(numIndices);
-//  for(int i = 0; i < numIndices; i++)
-//    indices[i] = i;
-//
-//  points_vbo = 0;
-//  glGenBuffers(1, &points_vbo);
-//  glBindBuffer(GL_ARRAY_BUFFER, points_vbo);
-//  glBufferData(GL_ARRAY_BUFFER, coords.size() * sizeof(float), coords.data(), GL_STATIC_DRAW);
-//
-//  colors_vbo = 0;
-//  glGenBuffers(1, &colors_vbo);
-//  glBindBuffer(GL_ARRAY_BUFFER, colors_vbo);
-//  glBufferData(GL_ARRAY_BUFFER, colors.size() * sizeof(float), colors.data(), GL_STATIC_DRAW);
-//
-//  index_vbo = 0;    // Index buffer object
-//  glGenBuffers(1, &index_vbo);
-//  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_vbo);
-//  glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(GLuint), indices.data(), GL_STATIC_DRAW);
-//}
 
-
-World SetUpWorld(json config) {
-    json world_configuration = config["world_configs"][world_type];
-    return World(world_configuration, world_type);
-}
 
 int main() 
 {
     std::ifstream f("configs.json");
     json config = json::parse(f);
 
-    World w = SetUpWorld(config);
+    World w(config);
 
     if (!glfwInit()) {
         fprintf(stderr, "ERROR: could not start GLFW3\n");
@@ -549,25 +550,26 @@ int main()
     }
 
     glfwMakeContextCurrent(window);
+    glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+
     glewExperimental = GL_TRUE;
     glewInit();
 
-    w.AddSlimeManager(config);
+    w.AddSlimeManagerN(config);
     RenderManager rm = RenderManager();
-
 
     while (!glfwWindowShouldClose(window)) 
     {
         // wipe the drawing surface clear
-        /*  cout << "slowdown" << endl;
-            this_thread::sleep_for(chrono::milliseconds(500));*/
         glClearColor(0, 0, 0, 1.0);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        glBindVertexArray(w.sm.vao);
+        w.tick_all();
 
-        w.serial_tick();
-        glDrawArrays(GL_POINTS, 0, w.sm.slimeCount);
+        for (SlimeManager s : w.sm) {
+            glBindVertexArray(s.vao);
+            glDrawArrays(GL_POINTS, 0, s.slimeCount);
+        }
 
         // update other events like input handling
         glfwPollEvents();
@@ -611,3 +613,9 @@ const char *GetFragmentShader()
    return fragmentShader;
 }
 
+void framebuffer_size_callback(GLFWwindow* window, int width, int height)
+{
+    // make sure the viewport matches the new window dimensions; note that width and 
+    // height will be significantly larger than specified on retina displays.
+    glViewport(0, 0, width, height);
+}
