@@ -16,6 +16,14 @@
             "color": [ 1.0, 0.0, 0.0 ],
             "circle": 10
         },
+        "white_slime": {
+            "move_dist": 1,
+            "sensor_dist": 9,
+            "rotation_angle": 45,
+            "sensor_rotation": 22.5,
+            "color": [ 1.0, 1.0, 1.0 ],
+            "circle": 11
+        },
         "liner": {
             "move_dist": 1,
             "sensor_dist": 9,
@@ -100,7 +108,8 @@
             },
             "width": 4000,
             "height": 4000,
-            "decay": 0.9
+            "decay": 0.9,
+            "diffweight": 0.3
         },
         "67_more": {
             "species_ct": 1,
@@ -110,7 +119,8 @@
             },
             "width": 4000,
             "height": 4000,
-            "decay": 0.67
+            "decay": 0.67,
+            "diffweight": 0.3
         },
         "red_smaller": {
             "species_ct": 1,
@@ -121,7 +131,8 @@
             },
             "width": 1300,
             "height": 1300,
-            "decay": 0.5
+            "decay": 0.95,
+            "diffweight": 0.35
 
         },
         "red_green_smaller": {
@@ -134,7 +145,8 @@
             },
             "width": 1300,
             "height": 1300,
-            "decay": 0.5
+            "decay": 0.9,
+            "diffweight": 0.35
 
         },
         "evil_city": {
@@ -146,7 +158,8 @@
             },
             "width": 4000,
             "height": 4000,
-            "decay": 0.5
+            "decay": 0.5,
+            "diffweight": 0.3
         },
         "just_purple": {
 
@@ -155,7 +168,8 @@
                 "purple_chad": 1.0
             },
             "width": 500,
-            "height": 500
+            "height": 500,
+            "diffweight": 0.3
         },
         "small_purple": {
             "slimes": 10000,
@@ -163,7 +177,8 @@
                 "purple_chad": 1.0
             },
             "width": 600,
-            "height": 600
+            "height": 600,
+            "diffweight": 0.3
         },
         "mostly_blue": {
             "species_ct": 2,
@@ -174,7 +189,8 @@
             },
             "width": 4000,
             "height": 4000,
-            "decay": 0.7
+            "decay": 0.98,
+            "diffweight": 0.35
         },
         "green_city": {
             "species_ct": 2,
@@ -185,7 +201,8 @@
             },
             "width": 1300,
             "height": 1300,
-            "decay": 0.6
+            "decay": 0.6,
+            "diffweight": 0.3
         },
         "enemy_ville": {
             "species_ct": 2,
@@ -196,7 +213,8 @@
             },
             "width": 1300,
             "height": 1300,
-            "decay": 0.6
+            "decay": 0.6,
+            "diffweight": 0.3
         },
         "purple_haze": {
             "species_ct": 3,
@@ -204,11 +222,12 @@
             "slime_types": {
                 "o_green_slime": 0.4,
                 "o_blue_slime": 0.4,
-                "o_purple_chad": 0.2
+                "purple_chad": 0.2
             },
             "width": 1300,
             "height": 1300,
-            "decay": 0.2
+            "decay": 0.8,
+            "diffweight": 0.3
         },
         "scary_subway": {
             "species_ct": 2,
@@ -219,7 +238,8 @@
             },
             "width": 4000,
             "height": 4000,
-            "decay": 0.9
+            "decay": 0.95,
+            "diffweight": 0.3
         },
         "scary_subway_v2": {
             "species_ct": 3,
@@ -231,8 +251,21 @@
             },
             "width": 4000,
             "height": 4000,
-            "decay": 0.8
+            "decay": 0.8,
+            "diffweight": 0.3
+        },
+        "s_go": {
+            "species_ct": 1,
+            "slimes": 13500,
+            "slime_types": {
+                "white_slime": 1.0
+            },
+            "width": 300,
+            "height": 300,
+            "decay": 0.9,
+            "diffweight": 0.5
         }
+
     }
 
     }

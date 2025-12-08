@@ -4,6 +4,7 @@ layout (local_size_x = 1, local_size_y = 1) in;
 layout (rgba8, binding = 0) uniform image2D TrailMap;
 layout (rgba8, binding = 3) uniform image2D DiffuseMap;
 uniform float decay;
+uniform float diff_weight;
 
 void Diffuse(ivec2 pos) {
     vec4 sum = vec4(0);
@@ -18,8 +19,13 @@ void Diffuse(ivec2 pos) {
             sum += imageLoad(TrailMap, ivec2(sampleX, sampleY));
         }
     }
-    vec4 blurCol = vec4((sum / 9) * decay);
-    imageStore(DiffuseMap, pos, max(vec4(0), min(blurCol, vec4(1.0,1.0,1.0,1.0))));
+
+    vec4 blurCol = sum / 9.0;
+    vec4 currentTrail = imageLoad(TrailMap, pos); // ...maybe
+    
+    vec4 diffusedTrail = mix(currentTrail, blurCol, diff_weight);
+    vec4 resultCol = diffusedTrail * decay;
+    imageStore(DiffuseMap, pos, max(vec4(0), min(resultCol, vec4(1.0,1.0,1.0,1.0))));
 }
 
 void main() {

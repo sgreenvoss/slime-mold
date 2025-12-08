@@ -30,7 +30,8 @@ using namespace std;
 
 vector<string>world_options = { "red_smaller", "red_green_smaller", 
                                 "six_seven_rose_circles", "mostly_blue", 
-                                "purple_haze", "scary_subway", "scary_subway_v2"};
+                                "purple_haze", "scary_subway", "scary_subway_v2",
+                                "s_go"};
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 // green_city was 60000
@@ -153,6 +154,7 @@ public:
     int numSlimes;
     int numSpecies;
     float decay;
+    float diff_weight;
     json world_config;
     json conf;
     unsigned int texture, backup_texture;
@@ -168,7 +170,7 @@ public:
         numSlimes = world_config["slimes"];
         numSpecies = world_config["species_ct"];
         decay = world_config["decay"];
-
+        diff_weight = world_config["diffweight"];
     }
 
     void reconfig(int simID) {
@@ -180,6 +182,7 @@ public:
         cout << "numslimes in reconfig is " << numSlimes << endl;
         numSpecies = world_config["species_ct"];
         decay = world_config["decay"];
+        diff_weight = world_config["diffweight"];
     }
 
     void SetUpGPU(vector<ParticleSettings>& settings, vector<smallPart>& slimes) {
@@ -218,6 +221,8 @@ public:
 
         glUseProgram(basic.ID);
         basic.setFloat("decay", decay);
+        slimeSim.setFloat("diffweight", diff_weight);
+
         glUseProgram(slimeSim.ID);
         slimeSim.setUInt("numSlimes", numSlimes);
         slimeSim.setInt("numSpecies", numSpecies);
@@ -281,13 +286,16 @@ public:
                     y = max(0, min(y, height - 1));
 
                     pos = glm::ivec2(x, y);
+                    glm::vec2 direction_to_center = screen_center - p_i;
+                    // atan2(y, x) calculates the angle from the positive x-axis
+                    float initial_heading = std::atan2(direction_to_center.y, direction_to_center.x);
+                    slimes.push_back(smallPart{ pos, initial_heading, idx });
                 }
                 else {
                     pos = glm::ivec2(distx(generator), disty(generator));
+                    slimes.push_back(smallPart{ pos, (float)angle_dist(generator), idx });
                 }
                 
-                
-                slimes.push_back(smallPart{ pos, (float)angle_dist(generator), idx });
             }
             cout << "number of slimes: " << slimes.size() << endl;
             idx++;
@@ -343,7 +351,7 @@ int main()
         exit(EXIT_FAILURE);
     }
 
-    glm::ivec2 windowDims = glm::ivec2(1400, 1400);
+    glm::ivec2 windowDims = glm::ivec2(1000, 1000);
 
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
