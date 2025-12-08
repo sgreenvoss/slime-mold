@@ -1,10 +1,10 @@
 {
     "slime_configs": {
-        "red_slime": {
-            "move_dist": 1,
-            "sensor_dist": 9,
-            "rotation_angle": 45,
-            "sensor_rotation": 22.5,
+        "six_seven": {
+            "move_dist": 67,
+            "sensor_dist": 67,
+            "rotation_angle": 67,
+            "sensor_rotation": 67,
             "color": [ 1.0, 0.0, 0.0 ],
             "pref": 1
         },
@@ -18,9 +18,9 @@
         },
         "green_slime": {
             "move_dist": 1,
-            "sensor_dist": 9,
+            "sensor_dist": 4,
             "rotation_angle": 45,
-            "sensor_rotation": 45,
+            "sensor_rotation": 22.5,
             "color": [ 0.0, 1.0, 0.0 ],
             "pref": -1
         },
@@ -36,22 +36,22 @@
     },
 
     "world_configs": {
-        "mostly_red": {
-            "slimes": 50000,
+        "six_seven_rose_circles": {
+            "slimes": 5000000,
             "slime_types": {
-                "red_slime": 0.8,
-                "blue_slime": 0.2
+                "six_seven": 1.0
             },
-            "width": 1000,
-            "height": 1000
+            "width": 5000,
+            "height": 5000
         },
         "red_smaller": {
             "slimes": 50000,
+            "species":  1,
             "slime_types": {
                 "red_slime": 1
             },
-            "width": 600,
-            "height": 600
+            "width": 5000,
+            "height": 5000
         },
         "just_purple": {
             "slimes": 107500,
@@ -96,18 +96,6 @@
             },
             "width": 1000,
             "height": 1000
-        }
-    },
-    "worlds": {
-        "greenanred": {
-            "width": 600,
-            "height": 600,
-            "active_worlds": [ "green_city", "red_smaller" ]
-        },
-        "ventricles": {
-            "width": 600,
-            "height": 600,
-            "active_worlds": [ "red_smaller", "green_city" ]
         }
     }
 

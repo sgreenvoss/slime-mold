@@ -152,8 +152,13 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="configs.json" />
+    <None Include="frag.glsl" />
+    <None Include="slime.glsl" />
+    <None Include="slime_sim.glsl" />
+    <None Include="vert.glsl" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="compute-helper.h" />
     <ClInclude Include="json.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
