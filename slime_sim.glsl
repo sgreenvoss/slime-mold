@@ -1,6 +1,7 @@
 #version 430 core
 layout(local_size_x = 256) in;
 // once per sliiime
+#define M_PI 3.141593
 
 struct Particle {
     ivec2 pos;
@@ -15,6 +16,7 @@ struct ParticleSettings {
     float sensor_rotation;
     vec4 color;
     int pref;
+    float padding[3];
 };
 
 layout(rgba8, binding = 0) uniform image2D TrailMap;
@@ -82,8 +84,9 @@ float sense(Particle s, ParticleSettings set, int angleMult, ivec2 worldDim) {
 
     int x = max(0, min(int(round(loc.x)), worldDim.x - 1));
     int y = max(0, min(int(round(loc.y)), worldDim.y - 1));
+    int channel = (set.pref / 10) - 1;
     vec4 pixel = imageLoad(TrailMap, ivec2(x, y));
-    return length(pixel.rgb);
+    return pixel[channel];
 }
 
 void main() {
@@ -105,14 +108,43 @@ void main() {
 
     vec2 newPos = vec2(slime.pos.x + new_direction.x * set.move_dist,
                          slime.pos.y + new_direction.y * set.move_dist);
+    bool wall_hit = false;
+    
+    // Check X boundaries
+    if (newPos.x < 0) {
+        new_heading = M_PI - new_heading; // Reflect heading across Y-axis
+        wall_hit = true;
+    } else if (newPos.x >= dims.x) {
+        new_heading = M_PI - new_heading; // Reflect heading across Y-axis
+        wall_hit = true;
+    }
+    
+    if (newPos.y < 0) {
+        new_heading = -new_heading; // Reflect heading across X-axis
+        wall_hit = true;
+    } else if (newPos.y >= dims.y) {
+        new_heading = -new_heading; // Reflect heading across X-axis
+        wall_hit = true;
+    }
+
+    // Ensure heading is in [0, 2*PI] range after reflection
+    if (wall_hit) {
+        new_heading = mod(new_heading, 2.0 * M_PI);
+        if (new_heading < 0.0) {
+            new_heading += 2.0 * M_PI;
+        }
+
+        new_direction = vec2(cos(new_heading), sin(new_heading));
+        newPos = vec2(slime.pos.x + new_direction.x * set.move_dist,
+                      slime.pos.y + new_direction.y * set.move_dist);
+    }
 
     newPos = clamp(newPos, ivec2(0), dims - ivec2(1));
     ivec2 finPos = ivec2(round(newPos));
     particles[idx].heading = new_heading;
+    particles[idx].pos = finPos;
 
-    //vec4 pixel = imageLoad(TrailMap, ivec2(finPos.x, finPos.y));
-    //pixel = clamp(pixel + vec4(0.5), vec4(0), vec4(1.0));
-
-    imageStore(TrailMap, finPos, vec4(1.0));
-    particles[gl_GlobalInvocationID.x].pos = finPos;
+    vec4 current_col = imageLoad(TrailMap, finPos);
+    vec4 new_color = min(current_col + set.color, vec4(1.0));
+    imageStore(TrailMap, finPos, new_color);
 }

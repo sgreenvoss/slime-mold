@@ -11,6 +11,8 @@
 #include <random>
 #include <algorithm>
 #include <chrono>
+#include <mutex>
+#include <queue>
 #include <thread>
 #include <omp.h>
 
@@ -26,20 +28,64 @@ using namespace std;
 #include <glm/vec2.hpp>
 
 
-const unsigned int REF_PER_FRAME = 1000;
-//const string world_type = "ventricles";
-const string current_world = "six_seven_rose_circles";
+vector<string>world_options = { "red_smaller", "red_green_smaller", 
+                                "six_seven_rose_circles", "mostly_blue", 
+                                "purple_haze", "scary_subway", "scary_subway_v2"};
+
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
-void processInput(GLFWwindow* window);
 // green_city was 60000
 
-glm::vec2 generateRandomPointInUnitCircle(std::mt19937 generator) {
+struct smallPart {
+    glm::ivec2 pos;
+    float heading;
+    int species_id;
+};
+
+struct ParticleSettings {
+    int move_dist;
+    int sensor_dist;
+    float rotation_angle;
+    float sensor_rotation;
+    glm::vec4 color;
+    int circle; // stores 1-3 for channel preference in 10s place, then 0-1 for if it should spawn in circle
+    float padding[3];
+};
+
+class CommandQueue {
+private:
+    std::queue<std::string> q;
+    std::mutex m;
+
+public:
+    // Non-blocking way to check for a command
+    bool try_pop(std::string& value) {
+        std::lock_guard<std::mutex> lock(m);
+        if (q.empty()) {
+            return false;
+        }
+        value = q.front();
+        q.pop();
+        return true;
+    }
+
+    // Blocking way to push a command
+    void push(const std::string& value) {
+        std::lock_guard<std::mutex> lock(m);
+        q.push(value);
+    }
+};
+CommandQueue command_queue;
+bool running = true;
+mt19937 generator(random_device{}());
+uniform_real_distribution<> angle_dist(0.0, 2.0 * M_PI);
+uniform_real_distribution<> radius_sq_dist(0.0, 1.0);
+
+
+
+glm::vec2 generateRandomPointInUnitCircle() {
 
     // Uniform distribution for angle (0 to 2*PI)
-    std::uniform_real_distribution<> angle_dist(0.0, 2.0 * M_PI);
-    // Uniform distribution for radius squared (0 to 1) to ensure uniform point distribution
-    std::uniform_real_distribution<> radius_sq_dist(0.0, 1.0);
-
+    
     // Generate random angle and radius
     double angle = angle_dist(generator);
     double radius = std::sqrt(radius_sq_dist(generator)); // Take square root for uniform distribution
@@ -66,22 +112,217 @@ string LoadShaderFile(const char* filePath) {
     return src;
 }
 
+void inputListener() {
+    cout << "enter an integer corresponding to one of the simulations. " << endl;
+    string input;
+    int i = 0;
+    for (string s : world_options) {
+        cout << i++ << ": " << s << endl;
+    }
+    while (running) {
+        cout << ">>" << flush;
+        if (getline(cin, input)) {
+            if (input.empty()) continue;
+            // stupid err checking here
+            try {
+                int in = stoi(input);
+                if (in >= 0 && in < i) {
+                    command_queue.push(input);
+                }
+                else {
+                    command_queue.push("stop");
+                }
+            }
+            catch (const exception& e) {
+                continue;
+            }
+
+        }
+        else {
+            command_queue.push("stop");
+            break;
+        }
+
+    }
+    cout << "ok bye" << endl;
+}
 
 class World {
 public:
     int width, height;
+    int numSlimes;
+    int numSpecies;
+    float decay;
     json world_config;
+    json conf;
+    unsigned int texture, backup_texture;
+    ComputeShader basic, slimeSim;
 
 
-    World(json &conf) {
-        world_config = conf;
-        // assuming world congfigs rather than worlds here
-        width = conf["world_configs"][current_world]["width"];
-        height = conf["world_configs"][current_world]["height"];
-       // cout << "running here" << endl;
+    World(json &_conf, int simID) : 
+        conf(_conf),
+        world_config(_conf.at("world_configs").at(world_options[simID]))
+    {
+        width = world_config["width"];
+        height = world_config["height"];
+        numSlimes = world_config["slimes"];
+        numSpecies = world_config["species_ct"];
+        decay = world_config["decay"];
 
     }
 
+    void reconfig(int simID) {
+        world_config = conf.at("world_configs").at(world_options[simID]);
+        cout << world_config << endl;
+        width = world_config["width"];
+        height = world_config["height"];
+        numSlimes = world_config["slimes"];
+        cout << "numslimes in reconfig is " << numSlimes << endl;
+        numSpecies = world_config["species_ct"];
+        decay = world_config["decay"];
+    }
+
+    void SetUpGPU(vector<ParticleSettings>& settings, vector<smallPart>& slimes) {
+        glGenTextures(1, &texture); 
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        glClearTexImage(texture, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glBindImageTexture(0, texture, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
+
+        glGenTextures(1, &backup_texture); 
+        glBindTexture(GL_TEXTURE_2D, backup_texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        glClearTexImage(backup_texture, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glBindImageTexture(3, backup_texture, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
+
+        GLuint settingsSSBO = 0; 
+        GLuint partSSBO = 0;
+
+        glGenBuffers(1, &settingsSSBO);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, settingsSSBO);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, settings.size() * sizeof(ParticleSettings), settings.data(), GL_STATIC_DRAW);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, settingsSSBO);
+
+        glGenBuffers(1, &partSSBO);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, partSSBO);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, slimes.size() * sizeof(smallPart), slimes.data(), GL_DYNAMIC_DRAW);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, partSSBO);
+
+        glUseProgram(basic.ID);
+        basic.setFloat("decay", decay);
+        glUseProgram(slimeSim.ID);
+        slimeSim.setUInt("numSlimes", numSlimes);
+        slimeSim.setInt("numSpecies", numSpecies);
+    }
+
+    void InitGL() {
+        cout << "numslimes in initgl is " << numSlimes << endl;
+        basic = ComputeShader("slime.glsl", glm::uvec2(width, height), numSlimes);
+        slimeSim = ComputeShader("slime_sim.glsl", glm::uvec2(width, height), numSlimes);
+    }
+
+    void SetUpSim(vector<ParticleSettings> &settings, vector<smallPart> &slimes) {
+        glm::vec2 screen_center = glm::vec2((float)width / 2.0f, (float)height / 2.0f);
+        uniform_int_distribution<int> distx(0, width - 1);
+        uniform_int_distribution<int> disty(0, height - 1);
+
+        int slimed = 0;
+        int idx = 0;
+
+        for (auto& kvp : world_config.at("slime_types").items()) {
+            // cout << kvp.key() << " " << kvp.value() << endl;
+            //float slime_ratio = kvp.value();
+            cout << round(numSlimes * kvp.value()) << endl;
+            int s_count = (int)ceil(numSlimes * (float)kvp.value());
+            cout << "s_count: " << s_count << endl;
+            json slime_conf = conf.at("slime_configs").at(kvp.key());
+
+            float r = slime_conf.at("color")[0];
+            float g = slime_conf.at("color")[1];
+            float b = slime_conf.at("color")[2];
+
+            glm::vec4 col = glm::vec4(r, g, b, 1.0);
+
+            settings.push_back({ slime_conf["move_dist"],
+                slime_conf["sensor_dist"],
+                slime_conf["sensor_rotation"],
+                slime_conf["rotation_angle"],
+                col,
+                slime_conf["circle"]
+                }
+            );
+
+            int start = slimed;
+            int end = start + s_count;
+            cout << "species id: " << idx << endl;
+            for (int i = start; i < end; i++) {
+                slimed++;
+
+                glm::ivec2 pos;
+
+                if (slime_conf["circle"] % 2 == 0) {
+                    float initial_radius = 0.9 * std::min((float)width, (float)height) / 2.0f;
+                    glm::vec2 p_i = screen_center + (generateRandomPointInUnitCircle() * initial_radius);
+                
+
+                    // p_i += glm::vec2((float)width / 2, (float)height / 2);
+                    int x = round(p_i.x);
+                    int y = round(p_i.y);
+
+                    x = max(0, min(x, width - 1));
+                    y = max(0, min(y, height - 1));
+
+                    pos = glm::ivec2(x, y);
+                }
+                else {
+                    pos = glm::ivec2(distx(generator), disty(generator));
+                }
+                
+                
+                slimes.push_back(smallPart{ pos, (float)angle_dist(generator), idx });
+            }
+            cout << "number of slimes: " << slimes.size() << endl;
+            idx++;
+        }
+        cout << "settings length: " << settings.size() << endl;
+        
+    }
+
+    unsigned int simStep(bool swapped) {
+        float currentFrameTime = (float)glfwGetTime();
+
+        unsigned int currentTex = swapped ? backup_texture : texture;
+        unsigned int oldTex = swapped ? texture : backup_texture;
+
+        glUseProgram(basic.ID);
+        glBindImageTexture(0, currentTex, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
+        glBindImageTexture(3, oldTex, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
+        glUniform1f(glGetUniformLocation(basic.ID, "time"), currentFrameTime);
+
+        glDispatchCompute(width, height, 1);
+        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+
+        // 2. Slime Simulation Compute Shader (slimeSim.ID)
+        glUseProgram(slimeSim.ID);
+        glBindImageTexture(0, oldTex, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
+        glUniform1f(glGetUniformLocation(slimeSim.ID, "time"), currentFrameTime);
+
+        int groups = (numSlimes + 255) / 256;
+        glDispatchCompute(groups, 1, 1);
+        // Barrier needed for subsequent rendering (texture fetch) and SSBO access
+        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+
+        return currentTex;
+
+    }
 };
 
 void _print_shader_info_log(GLuint shader_index) {
@@ -93,25 +334,9 @@ void _print_shader_info_log(GLuint shader_index) {
 }
 
 
-struct smallPart {
-    glm::ivec2 pos;
-    float heading;
-    int species_id;
-};
-
-struct ParticleSettings {
-    int move_dist;
-    int sensor_dist;
-    float rotation_angle;
-    float sensor_rotation;
-    glm::vec4 color;
-    int pref;
-};
-
 int main() 
 {
-    // TODO fix
-    int numSlimes = 670000;
+    int sim_id = 0;
 
     if (!glfwInit()) {
         fprintf(stderr, "ERROR: could not start GLFW3\n");
@@ -127,7 +352,7 @@ int main()
 
     std::ifstream f("configs.json");
     json config = json::parse(f);
-    World w(config);
+    World w(config, sim_id);
 
     GLFWwindow* window = glfwCreateWindow(windowDims.x, windowDims.y, "sliiime", NULL, NULL);
     if (!window) {
@@ -140,9 +365,9 @@ int main()
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
     glewExperimental = GL_TRUE;
     glewInit();
+    w.InitGL();
 
-
-    // -----------------------------------shaders-----------------------------------
+    // -----------------------------------simple shaders-----------------------------------
     const GLubyte* renderer = glGetString(GL_RENDERER); // get renderer string
     const GLubyte* version = glGetString(GL_VERSION);   // version as a string
     printf("Renderer: %s\n", renderer);
@@ -194,56 +419,16 @@ int main()
     glUseProgram(shaderProgramID);
     glDeleteShader(v_id); glDeleteShader(f_id);
 
-    // end shader zone ------------------------------------------------------------
+    // end simple shader zone ------------------------------------------------------------
+
 
     vector<ParticleSettings> settings;
     vector<smallPart> slimes;
-    uniform_int_distribution<> distribx(0, w.width - 1);
-    uniform_int_distribution<> distriby(0, w.height - 1);
     uniform_real_distribution<> angleDist((float)0.0, (float)2.0 * 3.141593);
     mt19937 gen(random_device{}());
 
-    int slimed = 0;
-    int idx = 0;
-    // TODO world_now should be held by the world
-    float screen_radius = std::min((float)w.width, (float)w.height) / 2.0f;
-    glm::vec2 screen_center = glm::vec2((float)w.width / 2.0f, (float)w.height / 2.0f);
-    cout << screen_center.x << " " << screen_center.y << endl;
-
-    for (auto& kvp : config.at("world_configs").at(current_world).at("slime_types").items()) {
-        float slime_ratio = kvp.value();
-
-        int s_count = (int)(slime_ratio * (float) numSlimes);
-        json slime_conf = config.at("slime_configs").at(kvp.key());
-
-        float r = slime_conf.at("color")[0];
-        float g = slime_conf.at("color")[1];
-        float b = slime_conf.at("color")[2];
-        glm::vec4 col = glm::vec4(r, g, b, 1);
-
-        settings.push_back({ slime_conf["move_dist"],
-            slime_conf["sensor_dist"],
-            slime_conf["sensor_rotation"],
-            slime_conf["rotation_angle"],
-            col,
-            slime_conf["pref"]
-            }
-        );
-
-        int start = slimed;
-        int end = start + s_count;
-        for (int i = start; i < end; i++) {
-            glm::vec2 p_i = screen_center + (generateRandomPointInUnitCircle(gen) * (float)w.height * 0.5f);
-            
-           // p_i += glm::vec2((float)width / 2, (float)height / 2);
-            glm::ivec2 pos = glm::ivec2(round(p_i.x), round(p_i.y));
-            //glm::ivec2 pos = glm::ivec2(distribx(gen), distriby(gen));
-            //cout << pos.x << " " << pos.y << endl;
-            slimes.push_back(smallPart{ pos, (float)angleDist(gen), idx });
-        }
-        cout << "number of slimes: " << slimes.size() << endl;
-        idx++;
-    }
+    w.SetUpSim(settings, slimes);
+    w.SetUpGPU(settings, slimes);
     //numSlimes = slimes.size();
 
     float vertices[] = {
@@ -278,115 +463,57 @@ int main()
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
     glEnableVertexAttribArray(1);
 
-    ComputeShader basic = ComputeShader("slime.glsl", glm::uvec2(w.width, w.height), numSlimes);
-    ComputeShader slimeSim = ComputeShader("slime_sim.glsl", glm::uvec2(w.width, w.height), numSlimes);
-
-    // set up the simulation! move this to a new function girl
-
-    unsigned int texture;
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_2D, texture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w.width, w.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-    glClearTexImage(texture, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-
-    glBindImageTexture(0, texture, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, texture);
-
-    glBindImageTexture(0, texture, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
-
-    glDisable(GL_DEPTH_TEST);
-
-    GLuint settingsSSBO = 0;
-    GLuint partSSBO = 0;
-
-    glGenBuffers(1, &settingsSSBO);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, settingsSSBO);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, settings.size() * sizeof(ParticleSettings), settings.data(), GL_STATIC_DRAW);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, settingsSSBO);
-
-    glGenBuffers(1, &partSSBO);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, partSSBO);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, slimes.size() * sizeof(smallPart), slimes.data(), GL_DYNAMIC_DRAW);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, partSSBO);
-    
-    // this holds stuff for the diffusion step
-    unsigned int backup_texture;
-    glGenTextures(1, &backup_texture);
-    glBindTexture(GL_TEXTURE_2D, backup_texture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w.width, w.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-    glClearTexImage(backup_texture, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-
-    glBindImageTexture(3, backup_texture, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, backup_texture);
-
-    glBindImageTexture(3, backup_texture, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
-
-
-    glUseProgram(slimeSim.ID);
-    slimeSim.setUInt("numSlimes", numSlimes);
-    slimeSim.setInt("numSpecies", 1); // TODO: modify when more species
     glUseProgram(shaderProgramID);
     glUniform1i(glGetUniformLocation(shaderProgramID, "TrailMap"), 0);
 
-    unsigned int currentTex = texture;
-    unsigned int oldTex = backup_texture;
     bool swapped = false;
+
+    // start the input listener
+    cout << "simulation started, sim id is " << sim_id << endl;
+    thread inputThread(inputListener);
+    int t = 5;
+    if (w.numSlimes > 1000000) {
+        t = 0;
+    }
+
     while (!glfwWindowShouldClose(window)) 
     {
-        currentTex = swapped ? backup_texture : texture;
-        oldTex = swapped ? texture : backup_texture;
-
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        float currentFrameTime = (float)glfwGetTime();
-
-        // 1. Decay/Diffusion Compute Shader (basic.ID)
-        glUseProgram(basic.ID);
-        glBindImageTexture(0, currentTex, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
-        glBindImageTexture(3, oldTex, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
-        glUniform1f(glGetUniformLocation(basic.ID, "time"), currentFrameTime);
-        glDispatchCompute(w.width, w.height, 1);
-        // Barrier needed for sampling (TrailMap) and subsequent image access (slimeSim)
-        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
-
-        // 2. Slime Simulation Compute Shader (slimeSim.ID)
-        glUseProgram(slimeSim.ID);
-        glBindImageTexture(0, oldTex, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
-        glUniform1f(glGetUniformLocation(slimeSim.ID, "time"), currentFrameTime);
-
-        int groups = (numSlimes + 255) / 256;
-        glDispatchCompute(groups, 1, 1);
-        // Barrier needed for subsequent rendering (texture fetch) and SSBO access
-        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
-
-        // 3. Rendering Pass
+        unsigned int tex = w.simStep(swapped);
         glUseProgram(shaderProgramID);
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, currentTex);
+        glBindTexture(GL_TEXTURE_2D, tex);
 
         glBindVertexArray(VAO);
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
-
-        // update other events like input handling
-        // put the stuff we've been drawing onto the display
         glfwSwapBuffers(window);
         glfwPollEvents();
         swapped = !swapped;
-        this_thread::sleep_for(chrono::milliseconds(5));
 
+        this_thread::sleep_for(chrono::milliseconds(t));
+
+        string command;
+        if (command_queue.try_pop(command)) {
+            cout << "heard: " << command << endl;
+            try {
+                sim_id = stoi(command);
+                settings.clear();
+                slimes.clear();
+                w.reconfig(sim_id);
+                w.InitGL();
+                w.SetUpSim(settings, slimes);
+                w.SetUpGPU(settings, slimes);
+                int t = 5;
+                if (w.numSlimes > 1000000) {
+                    t = 0;
+                }
+            }
+            catch (const exception& e) {
+                continue;
+            }
+        }
         
     }
 

@@ -6,15 +6,31 @@
             "rotation_angle": 67,
             "sensor_rotation": 67,
             "color": [ 1.0, 0.0, 0.0 ],
-            "pref": 1
+            "circle": 10
+        },
+        "red_slime": {
+            "move_dist": 1,
+            "sensor_dist": 6,
+            "rotation_angle": 67,
+            "sensor_rotation": 150,
+            "color": [ 1.0, 0.0, 0.0 ],
+            "circle": 10
+        },
+        "liner": {
+            "move_dist": 1,
+            "sensor_dist": 9,
+            "rotation_angle": 22.5,
+            "sensor_rotation": 160,
+            "color": [ 1.0, 0.0, 0.0 ],
+            "circle": 10
         },
         "blue_slime": {
             "move_dist": 1,
-            "sensor_dist": 9,
+            "sensor_dist": 4,
             "rotation_angle": 45,
-            "sensor_rotation": 45,
+            "sensor_rotation": 22.5,
             "color": [ 0.0, 0.0, 1.0 ],
-            "pref": 1
+            "circle": 31
         },
         "green_slime": {
             "move_dist": 1,
@@ -22,38 +38,118 @@
             "rotation_angle": 45,
             "sensor_rotation": 22.5,
             "color": [ 0.0, 1.0, 0.0 ],
-            "pref": -1
+            "circle": 20
         },
         "purple_chad": {
+            "move_dist": 1,
+            "sensor_dist": 9,
+            "rotation_angle": 140,
+            "sensor_rotation": 150,
+            "color": [ 1.0, 0.0, 1.0 ],
+            "circle": 10
+        },
+        "o_purple_chad": {
             "move_dist": 1,
             "sensor_dist": 9,
             "rotation_angle": 160,
             "sensor_rotation": 150,
             "color": [ 1.0, 0.0, 1.0 ],
-            "pref": 1
+            "circle": 30
+        },
+        "r_green_slime": {
+            "move_dist": 1,
+            "sensor_dist": 6,
+            "rotation_angle": 67,
+            "sensor_rotation": 150,
+            "color": [ 0.0, 1.0, 0.0 ],
+            "circle": 20
+        },
+        "o_green_slime": {
+            "move_dist": 1,
+            "sensor_dist": 9,
+            "rotation_angle": 45,
+            "sensor_rotation": 45,
+            "color": [ 0.0, 1.0, 0.0 ],
+            "circle": 20
+        },
+        "o_blue_slime": {
+            "move_dist": 1,
+            "sensor_dist": 9,
+            "rotation_angle": 22.5,
+            "sensor_rotation": 45,
+            "color": [ 0.0, 0.0, 1.0 ],
+            "circle": 30
+        },
+        "o_orange_slime": {
+            "move_dist": 1,
+            "sensor_dist": 9,
+            "rotation_angle": 22.5,
+            "sensor_rotation": 45,
+            "color": [ 1.0, 1.0, 0.0 ],
+            "circle": 10
         }
 
     },
 
     "world_configs": {
         "six_seven_rose_circles": {
-            "slimes": 5000000,
+            "species_ct": 1,
+            "slimes": 4000000,
             "slime_types": {
                 "six_seven": 1.0
             },
-            "width": 5000,
-            "height": 5000
+            "width": 4000,
+            "height": 4000,
+            "decay": 0.9
+        },
+        "67_more": {
+            "species_ct": 1,
+            "slimes": 6700000,
+            "slime_types": {
+                "six_seven": 1.0
+            },
+            "width": 4000,
+            "height": 4000,
+            "decay": 0.67
         },
         "red_smaller": {
+            "species_ct": 1,
             "slimes": 50000,
-            "species":  1,
+            "species": 1,
             "slime_types": {
                 "red_slime": 1
             },
-            "width": 5000,
-            "height": 5000
+            "width": 1300,
+            "height": 1300,
+            "decay": 0.5
+
+        },
+        "red_green_smaller": {
+            "species_ct": 2,
+            "slimes": 50000,
+            "species": 1,
+            "slime_types": {
+                "red_slime": 0.5,
+                "r_green_slime": 0.5
+            },
+            "width": 1300,
+            "height": 1300,
+            "decay": 0.5
+
+        },
+        "evil_city": {
+            "species_ct": 1,
+            "slimes": 500000,
+            "species": 1,
+            "slime_types": {
+                "liner": 1
+            },
+            "width": 4000,
+            "height": 4000,
+            "decay": 0.5
         },
         "just_purple": {
+
             "slimes": 107500,
             "slime_types": {
                 "purple_chad": 1.0
@@ -61,7 +157,7 @@
             "width": 500,
             "height": 500
         },
-        "small_purple" : {
+        "small_purple": {
             "slimes": 10000,
             "slime_types": {
                 "purple_chad": 1.0
@@ -70,33 +166,73 @@
             "height": 600
         },
         "mostly_blue": {
-            "slimes": 60000,
+            "species_ct": 2,
+            "slimes": 1000000,
             "slime_types": {
-                "red_slime": 0.3,
-                "blue_slime": 0.7
+                "blue_slime": 0.7,
+                "red_slime": 0.3
             },
-            "width": 1000,
-            "height": 1000
+            "width": 4000,
+            "height": 4000,
+            "decay": 0.7
         },
         "green_city": {
-            "slimes": 15000,
+            "species_ct": 2,
+            "slimes": 150000,
             "slime_types": {
-                "green_slime": 0.3,
-                "blue_slime": 0.7
+                "o_blue_slime": 0.5,
+                "o_green_slime": 0.5
             },
-            "width": 600,
-            "height": 600
+            "width": 1300,
+            "height": 1300,
+            "decay": 0.6
+        },
+        "enemy_ville": {
+            "species_ct": 2,
+            "slimes": 150000,
+            "slime_types": {
+                "o_blue_slime": 0.5,
+                "o_orange_slime": 0.5
+            },
+            "width": 1300,
+            "height": 1300,
+            "decay": 0.6
         },
         "purple_haze": {
-            "slimes": 60000,
+            "species_ct": 3,
+            "slimes": 6000000,
             "slime_types": {
-                "green_slime": 0.4,
-                "blue_slime": 0.4,
-                "purple_chad": 0.2
+                "o_green_slime": 0.4,
+                "o_blue_slime": 0.4,
+                "o_purple_chad": 0.2
             },
-            "width": 1000,
-            "height": 1000
+            "width": 1300,
+            "height": 1300,
+            "decay": 0.2
+        },
+        "scary_subway": {
+            "species_ct": 2,
+            "slimes": 4000000,
+            "slime_types": {
+                "six_seven": 0.67,
+                "red_slime": 0.33
+            },
+            "width": 4000,
+            "height": 4000,
+            "decay": 0.9
+        },
+        "scary_subway_v2": {
+            "species_ct": 3,
+            "slimes": 4000000,
+            "slime_types": {
+                "six_seven": 0.67,
+                "red_slime": 0.2,
+                "green_slime": 0.13
+            },
+            "width": 4000,
+            "height": 4000,
+            "decay": 0.8
         }
     }
 
-}
+    }

@@ -22,6 +22,7 @@ public:
     int numSlimes;
     // constructor generates the shader on the fly
     // ------------------------------------------------------------------------
+    
     ComputeShader(const char* computePath, glm::uvec2 size, int slimes)
     {
         work_size = size;
@@ -49,7 +50,7 @@ public:
             std::cout << "ERROR::SHADER::FILE_NOT_SUCCESSFULLY_READ: " << e.what() << std::endl;
         }
         const char* cShaderCode = computeCode.c_str();
-        // 2. compile shaders
+
         unsigned int compute;
         // compute shader
         compute = glCreateShader(GL_COMPUTE_SHADER);
@@ -65,6 +66,8 @@ public:
         // delete the shaders as they're linked into our program now and no longer necessary
         glDeleteShader(compute);
 
+    }
+    ComputeShader() {
     }
     // activate the shader
     // ------------------------------------------------------------------------
